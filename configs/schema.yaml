@@ -1,0 +1,54 @@
+# Canonical label lists and data-type registry for rates-vol-surface.
+# Loaded by src/schema.py at import time.
+
+expiry_labels:
+  - 1W
+  - 2W
+  - 1M
+  - 2M
+  - 3M
+  - 6M
+  - 9M
+  - 1Y
+  - 2Y
+  - 3Y
+  - 5Y
+  - 7Y
+  - 10Y
+
+maturity_labels:
+  - 1M
+  - 3M
+  - 6M
+  - 1Y
+  - 2Y
+  - 3Y
+  - 4Y
+  - 5Y
+  - 7Y
+  - 10Y
+  - 15Y
+  - 20Y
+  - 25Y
+  - 30Y
+
+# All panel types stored / produced by the project.
+data_types:
+  - rate
+  - atm_vol
+  - skew_p2
+  - skew_n2
+  - skew_spread   # derived
+  - skew_mid      # derived
+
+# Panels loaded directly from raw sources (Bloomberg, mock).
+raw_data_types:
+  - rate
+  - atm_vol
+  - skew_p2
+  - skew_n2
+
+# Panels computed from raw_data_types via src/features/derived.py.
+derived_data_types:
+  - skew_spread
+  - skew_mid

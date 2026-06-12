@@ -163,6 +163,147 @@ class SurfacePCA:
             }
         )
 
+    def incremental_transform(self, new_panel_row: pd.Series) -> pd.Series:
+        """Transform a single date's surface (a Series indexed by
+        ``(expiry, maturity)``) into a PC-score :class:`pd.Series`.
+
+        Missing pairs are imputed with the training-time column means; if
+        fewer than 50% of the fitted features are present, raise
+        ``ValueError`` — projecting on mostly-imputed data produces
+        meaningless scores. Designed for live / rolling inference without
+        re-fitting.
+        """
+        self._check_fitted()
+        if not isinstance(new_panel_row, pd.Series):
+            raise TypeError(
+                f"expected pd.Series, got {type(new_panel_row).__name__}"
+            )
+
+        aligned = new_panel_row.reindex(self._col_index)
+        n_required = len(self.feature_cols_)
+        n_present = int(aligned.notna().sum())
+        if n_required == 0 or n_present / n_required < 0.5:
+            raise ValueError(
+                f"Only {n_present}/{n_required} fitted features present "
+                f"({n_present / max(n_required, 1):.1%}); need at least 50%"
+            )
+
+        x = aligned.fillna(self.column_means_).values.reshape(1, -1)
+        if self.scaler_ is not None:
+            x = self.scaler_.transform(x)
+        scores = self.pca_.transform(x)[0]
+        return pd.Series(
+            scores, index=self.components_.index, name=new_panel_row.name
+        )
+
+    def rolling_transform(
+        self,
+        panel: pd.DataFrame,
+        window: int = 252,
+        step: int = 21,
+    ) -> pd.DataFrame:
+        """Re-fit PCA on a rolling ``window`` (every ``step`` days) and
+        project each in-window observation onto the most recent fit.
+
+        Produces one row per date once a full window is available; the
+        ``refit_date`` column records when the active PCA was last fit so
+        callers can see when the basis shifted.
+
+        This is the standard recipe for monitoring whether the surface's
+        factor structure is drifting — useful for detecting structural
+        breaks before they corrupt a downstream HMM.
+        """
+        if window <= 0 or step <= 0:
+            raise ValueError("window and step must be positive")
+        if len(panel) < window:
+            raise ValueError(
+                f"panel has {len(panel)} rows, need at least window={window}"
+            )
+
+        rows: list[dict] = []
+        dates: list = []
+        current_pca: SurfacePCA | None = None
+        current_refit_date = None
+        next_refit_idx = window - 1
+
+        for t in range(window - 1, len(panel)):
+            if t >= next_refit_idx:
+                window_slice = panel.iloc[t - window + 1 : t + 1]
+                current_pca = SurfacePCA(
+                    n_components=self.n_components,
+                    dropna_threshold=self.dropna_threshold,
+                    standardize=self.standardize,
+                ).fit(window_slice)
+                current_refit_date = panel.index[t]
+                next_refit_idx = t + step
+
+            assert current_pca is not None  # set on first iteration
+            try:
+                score = current_pca.incremental_transform(panel.iloc[t])
+            except ValueError:
+                continue
+            rec = score.to_dict()
+            rec["refit_date"] = current_refit_date
+            rows.append(rec)
+            dates.append(panel.index[t])
+
+        return pd.DataFrame(
+            rows, index=pd.Index(dates, name=panel.index.name or "date")
+        )
+
+    def compare_windows(
+        self,
+        panel: pd.DataFrame,
+        window_a: tuple[str, str],
+        window_b: tuple[str, str],
+    ) -> pd.DataFrame:
+        """Fit separate PCAs on two date windows and rank ``(expiry,
+        maturity)`` pairs by how much their PC1 loading shifted.
+
+        Returns a DataFrame with columns ``["expiry", "maturity",
+        "loading_a", "loading_b", "diff", "abs_diff"]`` sorted by
+        ``abs_diff`` descending. PC1 signs are aligned by inner product
+        before differencing (the raw PCA sign is arbitrary; without
+        alignment ``diff`` would be dominated by sign-flip noise).
+        """
+        panel_a = panel.loc[window_a[0] : window_a[1]]
+        panel_b = panel.loc[window_b[0] : window_b[1]]
+        if panel_a.empty or panel_b.empty:
+            raise ValueError(
+                f"one window is empty: A has {len(panel_a)} rows, B has {len(panel_b)}"
+            )
+
+        pca_a = SurfacePCA(
+            n_components=max(1, self.n_components),
+            dropna_threshold=self.dropna_threshold,
+            standardize=self.standardize,
+        ).fit(panel_a)
+        pca_b = SurfacePCA(
+            n_components=max(1, self.n_components),
+            dropna_threshold=self.dropna_threshold,
+            standardize=self.standardize,
+        ).fit(panel_b)
+
+        la = pca_a.loadings_.loc["PC1"]
+        lb = pca_b.loadings_.loc["PC1"]
+        common = la.index.intersection(lb.index)
+        la = la.loc[common]
+        lb = lb.loc[common]
+        if np.corrcoef(la.values, lb.values)[0, 1] < 0:
+            lb = -lb
+
+        out = pd.DataFrame(
+            {
+                "expiry": [pair[0] for pair in common],
+                "maturity": [pair[1] for pair in common],
+                "loading_a": la.values,
+                "loading_b": lb.values,
+            }
+        )
+        out["diff"] = out["loading_b"] - out["loading_a"]
+        out["abs_diff"] = out["diff"].abs()
+        return out.sort_values("abs_diff", ascending=False).reset_index(drop=True)
+
     def loading_heatmap_data(self, pc: str = "PC1") -> pd.DataFrame:
         """Return loadings for ``pc`` as an expiry×maturity grid.
 

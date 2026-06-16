@@ -23,19 +23,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
-# ---- Canonical label lists --------------------------------------------------
-EXPIRY_LABELS = [
-    "1M", "2M", "3M", "6M", "9M",
-    "1Y", "2Y", "3Y", "4Y", "5Y", "7Y", "10Y",
-    "12Y", "15Y", "20Y", "25Y", "30Y",
-]
-TENOR_LABELS = [
-    "1Y", "2Y", "3Y", "4Y", "5Y", "7Y", "10Y",
-    "12Y", "15Y", "20Y", "25Y", "30Y",
-]
-EXPIRY_RANK = {label: i for i, label in enumerate(EXPIRY_LABELS)}
-TENOR_RANK = {label: i for i, label in enumerate(TENOR_LABELS)}
+from config import EXPIRY_LABELS, TENOR_LABELS, EXPIRY_RANK, TENOR_RANK
 
 # ---- Regime parameters ------------------------------------------------------
 _TRANSITION_MATRIX = np.array(

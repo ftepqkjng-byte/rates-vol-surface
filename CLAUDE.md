@@ -46,17 +46,41 @@ interpretable factors that can be used as hedging reference.
 
 ## File map
 
+* `config.py` — canonical `(expiry, tenor)` universe. Single source of
+  truth for `EXPIRY_LABELS`, `TENOR_LABELS`, `EXPIRY_RANK`,
+  `TENOR_RANK`. `pca.py` and `mock_data.py` both import from here, so
+  changing the universe is a one-file edit.
 * `mock_data.py` — synthetic generator. Regime-switching DGP (3-state
   Markov chain → OU level + slope + vol). Full `expiry × tenor`
   cross-product (no length filter). Run as a script to regenerate
   `data/mock/`.
 * `pca.py` — `load_long(path)`, `to_wide(long_df)`, `run_pca(wide, k)`,
-  `reconstruct(scores, loadings, wide, k)`. Plus `EXPIRY_LABELS` /
-  `TENOR_LABELS` constants. `load_long` filters to these canonical
-  sets, regardless of what the pkl contains.
-* `notebooks/pca.ipynb` — current research notebook. 9 sections covering
-  rate PCA, vol PCA, loading heatmaps, regime-overlay score series,
-  cross-surface correlation, reconstruction quality, stability.
+  `reconstruct(scores, loadings, wide, k)`. Re-exports the canonical
+  label sets from `config.py`. `load_long` filters to these sets,
+  regardless of what the pkl contains.
+* `pattern_creator.py` — Streamlit app for hand-drawing sparse-PCA
+  prior patterns. Choose N patterns, fill a `(expiry × tenor)` grid
+  with 0/±1 values, optionally smooth via Gaussian filter, preview as
+  a 3D surface, save to a pkl that loads directly as a multi-factor
+  prior for `factors.sparse_pca_warm`. Run with
+  `streamlit run pattern_creator.py`.
+* `factors.py` — extension helpers: `varimax` / `rotate_scores`,
+  `make_blocks` / `block_pca` / `reconstruct_block` /
+  `stack_block_scores` / `block_summary` (default 3×3 partition in
+  `DEFAULT_EXPIRY_BLOCKS` / `DEFAULT_TENOR_BLOCKS`),
+  `sparse_pca_warm` (anchored sparse PCA started from an artificial
+  pattern), `regress` (generic OLS for testing any factor pattern),
+  `cross_surface_cca` / `lagged_corr`, plus comparison metrics
+  (`variance_retained`, `loading_sparsity`, `rolling_stability`,
+  `replication_residual`, `metrics_table`). All operate on diffed
+  wide panels.
+* `notebooks/pca.ipynb` — baseline vanilla PCA on rate / vol levels.
+* `notebooks/factors.ipynb` — extensions on **diff** panels: varimax,
+  3×3 block PCA, regression on block PCs, rate-vol CCA on stacked
+  block scores, comparison metrics.
+* `notebooks/sparse_pca.ipynb` — warm-started sparse PCA started from
+  artificial loading patterns (2s10s steepener, butterfly, …) on
+  diffed rate panel; anchor / L1 sweeps + trade-off curves.
 * `data/mock/{rate, atm_vol, skew_p2, skew_n2}.pkl` — long-format
   DataFrames with columns `[date, expiry, tenor, value]`. 500 days ×
   204 pairs = 102,000 rows each.
@@ -65,18 +89,32 @@ interpretable factors that can be used as hedging reference.
 
 ## Active research direction
 
-The vanilla PCA in `notebooks/pca.ipynb` is the baseline. Priority
+The vanilla PCA in `notebooks/pca.ipynb` is the baseline (on levels).
+The extension notebook `notebooks/factors.ipynb` works on **daily
+diffs** of the panels — we hedge moves, not levels. Priority
 extensions (in order):
 
 1. **Varimax-rotated PCA** — rotate vanilla PCA loadings to maximise
    loading sparsity per factor. Same cumulative variance.
-2. **Hierarchical PCA** — extract cube mean (level), run PCA on the
-   residual. Decouples PC1 from level-dominance.
-3. **Pre-defined bucket factors + residual PCA** — hand-defined
-   economic regions regressed out, then residual PCA. Most directly
-   hedge-mappable.
-4. **Joint rate-vol cross-surface structure** — CCA or lagged
-   correlation between rate factors and vol factors.
+2. **Block PCA** — partition the `(expiry, tenor)` grid into disjoint
+   blocks (default 3×3), fit PCA per block, stitch back to the full
+   grid. Factors are structurally local to a block, hence directly
+   hedge-mappable. Earlier "hierarchical PCA" / "bucket residual PCA"
+   formulations were both reinterpretations of this same idea.
+3. **Sparse PCA with warm start** — `factors.sparse_pca_warm(wide,
+   prior, anchor, l1)`: start from an artificial loading pattern (the
+   desk's hand-drawn factor) and iterate so loadings fit the market
+   better while staying close to the prior. `anchor` and `l1` are
+   N-scaled so unit-magnitude values are meaningful.
+4. **Regression on bucket / block factors** — `factors.regress(targets,
+   factors)` is a generic OLS workhorse. First use is "cube cells ~
+   stacked block PC1s"; reach for it whenever you want to test how
+   well any pattern (block PCs, varimax PCs, custom spreads, …)
+   explains any target panel. Returns betas / fitted / residuals / R²
+   in one dict.
+5. **Joint rate-vol cross-surface structure** — CCA on stacked block
+   scores (or any score panels), plus lagged correlation as a
+   sanity check.
 
 **Comparison metrics** for each: variance retained at K factors,
 loading sparsity, factor stability under rolling refit, hedge
@@ -97,4 +135,5 @@ replication residual.
 * Prefer one extra inline cell in the notebook over a new helper file.
 * Prefer one extra parameter on an existing function over a new function.
 * Ask before adding any dependency. Current set: pandas, numpy,
-  scikit-learn, matplotlib, seaborn, jupyter.
+  scikit-learn, matplotlib, seaborn, jupyter, streamlit. (scipy is
+  available transitively via scikit-learn.)

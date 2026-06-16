@@ -26,51 +26,77 @@ Regenerate the mock pkls:
 python mock_data.py
 ```
 
+Hand-draw sparse-PCA priors in a Streamlit app:
+
+```bash
+streamlit run pattern_creator.py
+```
+
 ## Layout
 
 ```
 .
-├── data/mock/        # 4 pkl tables: rate, atm_vol, skew_p2, skew_n2
-├── notebooks/pca.ipynb
-├── mock_data.py      # synthetic generator (regime-switching DGP)
-├── pca.py            # PCA helpers: load_long, to_wide, run_pca, reconstruct
+├── data/mock/             # 4 pkl tables: rate, atm_vol, skew_p2, skew_n2
+├── notebooks/
+│   ├── pca.ipynb          # baseline: vanilla PCA on levels
+│   ├── factors.ipynb      # extensions: varimax / block PCA / regression / CCA on diffs
+│   └── sparse_pca.ipynb   # warm-started sparse PCA from artificial patterns
+├── config.py              # canonical (expiry, tenor) universe — single source of truth
+├── mock_data.py           # synthetic generator (regime-switching DGP)
+├── pca.py                 # PCA helpers: load_long, to_wide, run_pca, reconstruct
+├── factors.py             # extensions: varimax, block_pca, CCA, metrics
+├── pattern_creator.py     # Streamlit app — hand-draw sparse-PCA priors, save to pkl
 ├── requirements.txt
 ├── README.md
-└── CLAUDE.md         # project context for AI assistants
+└── CLAUDE.md              # project context for AI assistants
 ```
 
 Each pkl is a long-format DataFrame with columns `[date, expiry, tenor, value]`.
 
 ## Research direction
 
-Vanilla PCA on the cube has two problems for hedging use:
+All extension work is on **daily diffs** of the panels — we hedge
+moves, not levels. Vanilla PCA on the diff cube has two problems for
+hedging use:
 
-* PC1 absorbs the bulk of variance (level mode dominates) — leaving the
-  remaining PCs to fight over residuals.
-* Loadings are dense linear combinations of all `(expiry, tenor)` cells
-  — hard to map to a tradeable hedge instrument.
+* Dominant PCs are dense linear combinations of all `(expiry, tenor)`
+  cells — hard to map to a tradeable hedge instrument.
+* Local structure (e.g. short-expiry × short-tenor moves) gets averaged
+  into global factors and is lost.
 
 The priority research tracks (in order):
 
 1. **Varimax-rotated PCA** — rotate PC loadings so each factor is
    supported on a sparse region of the cube. Same cumulative variance,
    redistributed onto interpretable axes.
-2. **Hierarchical PCA** — extract the level mode (cube mean) first,
-   then run PCA on the residual. PC1 stops being a level absorber, and
-   slope / butterfly / region-specific modes show up cleanly.
-3. **Pre-defined bucket factors + residual PCA** — define a small set
-   of economically meaningful regions (short-end level, 2s10s slope,
-   vol skew level, etc.), regress them out, run PCA on the residual.
-   This is the most directly hedge-mappable: each bucket corresponds to
-   a vega / DV01 bucket trader already thinks in.
-4. **Joint rate-vol structure** — once single-surface factors are
+2. **Block PCA** — partition the cube into a grid of disjoint blocks
+   (start with 3×3: short/mid/long expiry × short/mid/long tenor), fit
+   PCA inside each block independently, then stitch per-block
+   reconstructions back into the full grid. Each block's factors are
+   structurally local — they only load on cells inside that block,
+   which makes them directly hedge-mappable. Grid size is the only
+   tuning knob; finer grids → more factors but smaller per-block residual.
+3. **Sparse PCA with warm start** — initialise loadings at an
+   artificial pattern (the desk's hand-drawn factor — e.g. a 2s10s
+   steepener mask) and iterate `sparse_pca_warm` with a Tikhonov
+   anchor on `||w − w_prior||²` so the result fits the market better
+   while staying recognisable. Single `anchor` knob trades fit vs.
+   prior similarity; optional `l1` adds explicit sparsification.
+4. **Regression on bucket / block factors** — generic OLS interface
+   (`factors.regress`) for testing any factor design against any target
+   panel. First use is "cube cells ~ block PCs"; same call handles
+   varimax PCs, hand-built spreads, lagged factors, or any future
+   pattern. Returns betas, fitted, residuals, and per-target R² in one
+   dict.
+5. **Joint rate-vol structure** — once single-surface factors are
    characterised, check whether rate and vol cubes share latent
-   drivers (CCA or lagged correlations).
+   drivers (CCA on stacked block scores, or lagged correlation between
+   the corresponding rate and vol blocks).
 
 **Out of scope for now**: parametric overlays (Nelson-Siegel / SABR),
 tensor decomposition, autoencoders, regime detection.
 
 **Comparison metrics** for every method: variance retained at K
-factors, loading sparsity (Gini or `|loading| > threshold` count),
-factor stability under rolling-window refit, and hedge replication
-error (residual variance after K-factor reconstruction).
+factors, loading sparsity (Gini), factor stability under rolling-window
+refit, and hedge replication error (residual variance after K-factor
+reconstruction).

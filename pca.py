@@ -17,19 +17,10 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
+from config import EXPIRY_LABELS, TENOR_LABELS, EXPIRY_RANK, TENOR_RANK
 
-# Canonical label sets — anything outside these is dropped at load time.
-EXPIRY_LABELS = [
-    "1M", "2M", "3M", "6M", "9M",
-    "1Y", "2Y", "3Y", "4Y", "5Y", "7Y", "10Y",
-    "12Y", "15Y", "20Y", "25Y", "30Y",
-]
-TENOR_LABELS = [
-    "1Y", "2Y", "3Y", "4Y", "5Y", "7Y", "10Y",
-    "12Y", "15Y", "20Y", "25Y", "30Y",
-]
-_EXPIRY_RANK = {e: i for i, e in enumerate(EXPIRY_LABELS)}
-_TENOR_RANK = {t: i for i, t in enumerate(TENOR_LABELS)}
+_EXPIRY_RANK = EXPIRY_RANK
+_TENOR_RANK = TENOR_RANK
 
 
 def load_long(path: str) -> pd.DataFrame:

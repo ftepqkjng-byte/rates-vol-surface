@@ -23,32 +23,43 @@ jupyter notebook notebooks/pca.ipynb
 Regenerate the mock pkls:
 
 ```bash
-python mock_data.py
+python data/mock_data.py
 ```
 
 Hand-draw sparse-PCA priors in a Streamlit app:
 
 ```bash
-streamlit run pattern_creator.py
+streamlit run streamlit_apps/pattern_creator.py
 ```
 
 ## Layout
 
 ```
 .
-├── data/mock/             # 4 pkl tables: rate, atm_vol, skew_p2, skew_n2
+├── data/
+│   ├── mock/                       # raw + derived pkls per surface
+│   │   ├── {name}.pkl              # raw long-format
+│   │   ├── {name}_diff.pkl         # daily diff (wide)
+│   │   └── {name}_residual.pkl     # diff with std-weighted parallel shift stripped
+│   ├── mock_data.py                # synthetic generator + auto-runs pipeline
+│   └── pipeline.py                 # builds *_diff.pkl and *_residual.pkl from raw
 ├── notebooks/
-│   ├── pca.ipynb          # baseline: vanilla PCA on levels
-│   ├── factors.ipynb      # extensions: varimax / block PCA / regression / CCA on diffs
-│   └── sparse_pca.ipynb   # warm-started sparse PCA from artificial patterns
-├── config.py              # canonical (expiry, tenor) universe — single source of truth
-├── mock_data.py           # synthetic generator (regime-switching DGP)
-├── pca.py                 # PCA helpers: load_long, to_wide, run_pca, reconstruct
-├── factors.py             # extensions: varimax, block_pca, CCA, metrics
-├── pattern_creator.py     # Streamlit app — hand-draw sparse-PCA priors, save to pkl
+│   ├── pca.ipynb                   # PCA on parallel-shift-stripped residual panels
+│   ├── factors.ipynb               # extensions: varimax / block PCA / regression / CCA on diffs
+│   ├── sparse_pca.ipynb            # warm-started sparse PCA on hand-drawn priors
+│   ├── soft_constrained_pca.ipynb  # joint-ALS variant on the same priors
+│   └── pattern_projection.ipynb    # decompose surface moves onto hand-drawn patterns
+├── streamlit_apps/
+│   ├── pattern_creator.py          # hand-draw sparse-PCA priors, save to pkl
+│   └── pattern_projector.py        # decompose a period's surface move onto a saved pattern basis
+├── config.py                       # canonical (expiry, tenor) universe — single source of truth
+├── pca.py                          # PCA helpers: load_long, to_wide, run_pca, reconstruct
+├── factors/                        # extensions split by family (rotation, blocks,
+│                                   #   sparse, regression, cca, metrics);
+│                                   #   __init__.py re-exports everything
 ├── requirements.txt
 ├── README.md
-└── CLAUDE.md              # project context for AI assistants
+└── CLAUDE.md                       # project context for AI assistants
 ```
 
 Each pkl is a long-format DataFrame with columns `[date, expiry, tenor, value]`.

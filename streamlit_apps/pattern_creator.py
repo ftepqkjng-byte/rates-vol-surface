@@ -6,7 +6,7 @@ a 3D surface, and save to a local pkl.
 
 Run with::
 
-    streamlit run pattern_creator.py
+    streamlit run streamlit_apps/pattern_creator.py
 
 The saved pkl is a ``pd.DataFrame`` whose index is pattern names and
 whose columns are a MultiIndex of ``(expiry, tenor)`` — exactly the
@@ -19,6 +19,7 @@ Load and use::
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -27,7 +28,13 @@ import pandas as pd
 import streamlit as st
 from scipy.ndimage import gaussian_filter
 
-from config import EXPIRY_LABELS, TENOR_LABELS
+# Make the project-root helpers importable when this app is launched from
+# either the repo root or the streamlit_apps folder.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from config import EXPIRY_LABELS, TENOR_LABELS  # noqa: E402
 
 
 def smooth(arr: np.ndarray, sigma: float) -> np.ndarray:
@@ -176,6 +183,7 @@ with st.sidebar:
             new_patterns = loader()
             st.session_state.patterns = new_patterns
             st.session_state.n_patterns_input = len(new_patterns)
+            st.session_state.epoch += 1
             st.toast(f"Loaded {len(new_patterns)} patterns from "
                      f"'{preset_choice}'.", icon="✅")
 
@@ -196,6 +204,11 @@ with st.sidebar:
 
 if "patterns" not in st.session_state:
     st.session_state.patterns = []
+# Bumped whenever patterns are structurally replaced (preset load). Threaded
+# into per-tab widget keys so stale state from a prior layout — most visibly
+# a previous tab's name — can't bleed through onto the new patterns.
+if "epoch" not in st.session_state:
+    st.session_state.epoch = 0
 
 while len(st.session_state.patterns) < n_patterns:
     i = len(st.session_state.patterns) + 1
@@ -218,8 +231,10 @@ for i, tab in enumerate(tabs):
 
         name_col, _spacer = st.columns([1, 3])
         with name_col:
-            pdict["name"] = st.text_input("Pattern name", pdict["name"],
-                                          key=f"name_{i}")
+            pdict["name"] = st.text_input(
+                "Pattern name", pdict["name"],
+                key=f"name_{i}_e{st.session_state.epoch}",
+            )
 
         # Bulk-fill: set every cell in (expiries × tenors) to one value.
         # Versioned editor key forces re-init after each fill so the data
@@ -261,7 +276,8 @@ for i, tab in enumerate(tabs):
             st.markdown("**Raw grid** (rows = expiry, cols = tenor; "
                         "typical entries `0`, `+1`, `-1`)")
             pdict["grid"] = st.data_editor(
-                pdict["grid"], key=f"editor_{i}_v{pdict['version']}",
+                pdict["grid"],
+                key=f"editor_{i}_e{st.session_state.epoch}_v{pdict['version']}",
                 use_container_width=True, height=600,
             )
         with plot_col:

@@ -16,6 +16,13 @@ here so ``from factors import X`` keeps working:
                             (cross-sectional projection on a fixed basis)
 * ``factors.cca``         — ``cross_surface_cca``, ``lagged_corr``
                             (joint structure between score panels)
+* ``factors.separable``   — Kronecker / functional PCA family:
+                            ``marginal_kronecker_cov``,
+                            ``kronecker_cov_mle``,
+                            ``kronecker_separability_residual``,
+                            ``roughness_penalty_1d`` / ``_2d``,
+                            ``functional_pca``,
+                            ``marginal_eigen_patterns``.
 * ``factors.metrics``     — ``variance_retained``, ``loading_sparsity``,
                             ``rolling_stability``, ``replication_residual``,
                             ``metrics_table``
@@ -40,6 +47,15 @@ from .sparse import (
 )
 from .regression import regress, project_onto_patterns
 from .cca import cross_surface_cca, lagged_corr
+from .separable import (
+    marginal_kronecker_cov,
+    kronecker_cov_mle,
+    kronecker_separability_residual,
+    roughness_penalty_1d,
+    roughness_penalty_2d,
+    functional_pca,
+    marginal_eigen_patterns,
+)
 from .metrics import (
     variance_retained,
     loading_sparsity,
@@ -63,6 +79,11 @@ __all__ = [
     "regress", "project_onto_patterns",
     # cca
     "cross_surface_cca", "lagged_corr",
+    # separable
+    "marginal_kronecker_cov", "kronecker_cov_mle",
+    "kronecker_separability_residual",
+    "roughness_penalty_1d", "roughness_penalty_2d",
+    "functional_pca", "marginal_eigen_patterns",
     # metrics
     "variance_retained", "loading_sparsity", "rolling_stability",
     "replication_residual", "metrics_table",

@@ -57,16 +57,31 @@ interpretable factors that can be used as hedging reference.
   also auto-invokes `pipeline.build_all` (sibling file) so the diff
   and residual pkls land next to the raw tables.
 * `data/pipeline.py` — `compute_diff(wide)` and
-  `strip_parallel_shift(diff, window=60)`. The residual is the diff
-  with the realised-std-weighted cross-sectional parallel shift
-  subtracted (per-cell std uses strictly past data via `.shift(1)`,
-  so the construction is leakage-free). `build_all` writes
-  `{name}_diff.pkl` and `{name}_residual.pkl` in wide format
-  alongside the raw long-format pkls.
+  `strip_parallel_shift(diff, window=60, beta_mode="sigma",
+  agg="mean", trim_pct=0.1, sigma_floor_pct=None)`. The residual is
+  the diff with the realised-std-weighted cross-sectional parallel
+  shift subtracted (per-cell std uses strictly past data via
+  `.shift(1)`, so the construction is leakage-free in every mode).
+  The default args reproduce the original behaviour;
+  `beta_mode="regression"` swaps the implicit `β = σ` for a rolling
+  OLS β estimate, `agg` toggles `mean / median / trimmed_mean`
+  cross-sectional aggregation, and `sigma_floor_pct` lifts σ values
+  below the given per-row quantile to avoid blown-up z-scores from
+  near-zero σ. `build_all` writes `{name}_diff.pkl` and
+  `{name}_residual.pkl` in wide format alongside the raw long-format
+  pkls. Justifications for the defaults — and signals for when to
+  flip each knob — are in `notebooks/residual_diagnostics.ipynb`.
 * `pca.py` — `load_long(path)`, `to_wide(long_df)`, `run_pca(wide, k)`,
   `reconstruct(scores, loadings, wide, k)`. Re-exports the canonical
   label sets from `config.py`. `load_long` filters to these sets,
   regardless of what the pkl contains.
+* `pattern_basis.py` — separable Legendre tensor-product basis on the
+  `(expiry, tenor)` grid. Exposes shared helpers `degree_name`,
+  `tensor_product_name`, `degree_pair_grid`, `patterns_to_prior_df`
+  reused by `factors.separable.marginal_eigen_patterns` so naming and
+  triangular-degree truncation live in one place. Pure numpy /
+  pandas — no streamlit dependency — so notebooks and the streamlit
+  app both consume it without dragging the UI in.
 * `streamlit_apps/pattern_creator.py` — Streamlit app for hand-drawing
   sparse-PCA prior patterns. Choose N patterns, fill a
   `(expiry × tenor)` grid with 0/±1 values, optionally smooth via
@@ -96,6 +111,20 @@ interpretable factors that can be used as hedging reference.
       any factor pattern), `project_onto_patterns` (cross-sectional
       dual, with OLS / ridge / NNLS / lasso dispatch).
     * `factors/cca.py` — `cross_surface_cca`, `lagged_corr`.
+    * `factors/separable.py` — Kronecker / functional PCA family.
+      `marginal_kronecker_cov` (one-pass moment estimator of
+      `(C_expiry, C_tenor)` under a matrix-normal assumption),
+      `kronecker_cov_mle` (flip-flop MLE, trace-normalised so kron is
+      identifiable), `kronecker_separability_residual` (relative
+      Frobenius residual of `Σ - kron(C_e, C_τ)` — diagnostic only).
+      `roughness_penalty_1d` / `roughness_penalty_2d` finite-difference
+      penalties (order 2 = curvature, constants and linear trends in
+      the null space). `functional_pca(wide, lam, k)` solves
+      `eigh(Σ̂ - λ·P)`. `marginal_eigen_patterns(C_e, C_τ, ...)` packs
+      outer products of the top per-axis eigenvectors into the same
+      `{"name", "grid", "version"}` list as
+      `pattern_basis.preset_separable_poly`, ready for
+      `sparse_pca_warm`.
     * `factors/metrics.py` — `variance_retained`, `loading_sparsity`,
       `rolling_stability`, `replication_residual`, `metrics_table`.
 * `notebooks/pca.ipynb` — PCA on the parallel-shift-stripped residual
@@ -121,6 +150,28 @@ interpretable factors that can be used as hedging reference.
   of surface moves onto hand-drawn patterns from `pattern_creator.py`.
   Compares OLS / ridge / NNLS / lasso; shows the
   `pattern_corr` vs `exposure_corr` diagnostic for multicollinearity.
+* `notebooks/residual_diagnostics.ipynb` — six-check audit of the
+  `strip_parallel_shift` defaults on the mock surfaces: σ tail
+  behaviour, aggregator choice, regression-vs-σ β, residual-vs-shift
+  correlation heatmap, `window` sweep against `rolling_stability`,
+  grid-density bias. Each cell ends with a takeaway on whether the
+  current default needs changing.
+* `notebooks/separable_factors.ipynb` — track 6 driver. On the diffed
+  rate panel: naive vs flip-flop-MLE `(C_e, C_τ)` plus their
+  `kronecker_separability_residual`, marginal-eigvec patterns vs the
+  same-named Legendre patterns (cosine-sim table + 3D surfaces),
+  functional-PCA `λ` sweep against a rolling-stability proxy, and a
+  `sparse_pca_warm`-on-marginal-eigvec-prior `metrics_table` row that
+  drops straight into the cross-track sheet.
+* `tests/test_pipeline.py` — backward-compat + leakage-free + sanity
+  tests for `strip_parallel_shift`. Pipeline carries easy-to-break
+  invariants (default-args behaviour, no look-ahead under either β
+  mode).
+* `tests/test_separable.py` — synthetic-matrix-normal recovery for
+  `marginal_kronecker_cov` / `kronecker_cov_mle`, non-separable
+  contrast on the residual diagnostic, `functional_pca(lam=0)`
+  matches direct `eigh(Σ̂)`, and roughness-penalty null-space /
+  oscillation sanity checks. Run all tests with `pytest tests/`.
 * `data/mock/{rate, atm_vol, skew_p2, skew_n2}.pkl` — long-format
   DataFrames with columns `[date, expiry, tenor, value]`. 500 days ×
   204 pairs = 102,000 rows each.
@@ -157,6 +208,16 @@ extensions (in order):
 5. **Joint rate-vol cross-surface structure** — CCA on stacked block
    scores (or any score panels), plus lagged correlation as a
    sanity check.
+6. **Separable / functional factor models** (`factors.separable`,
+   driven by `notebooks/separable_factors.ipynb`). Two assumptions
+   in one module: (a) the cube covariance is approximately Kronecker
+   in `(C_expiry, C_tenor)`, so per-axis eigenvectors give a
+   data-driven separable basis that drops into `sparse_pca_warm`;
+   (b) loadings should be smooth on the grid, enforced by a
+   roughness-penalty term in `eigh(Σ̂ - λ·P)`. The Kronecker
+   assumption isn't taken on faith —
+   `kronecker_separability_residual` is reported in the notebook so
+   the diagnostic is visible on every dataset.
 
 **Comparison metrics** for each: variance retained at K factors,
 loading sparsity, factor stability under rolling refit, hedge

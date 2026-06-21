@@ -35,6 +35,11 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from config import EXPIRY_LABELS, TENOR_LABELS  # noqa: E402
+from pattern_basis import (  # noqa: E402
+    degree_name,
+    legendre_basis,
+    preset_separable_poly,
+)
 
 
 def smooth(arr: np.ndarray, sigma: float) -> np.ndarray:
@@ -148,11 +153,14 @@ def preset_diagonals_3() -> list[dict]:
     return out
 
 
+POLY_PRESET_NAME = "Separable polynomial basis (Level/Slope/Curvature)"
+
 PRESETS: dict[str, callable] = {
     "(none)":             None,
     "4 quadrants (2×2)":  preset_quadrants_2x2,
     "9 blocks (3×3)":     preset_blocks_3x3,
     "3 diagonal bands":   preset_diagonals_3,
+    POLY_PRESET_NAME:     preset_separable_poly,
 }
 
 
@@ -173,19 +181,69 @@ with st.sidebar:
     # instantiates in the same run.
     preset_choice = st.selectbox(
         "Load preset", list(PRESETS.keys()),
-        help="Replace current patterns with a preset partition. Each "
-             "preset pattern is 1.0 on its region and 0 elsewhere — "
-             "edit signs / values after loading.",
+        help="Replace current patterns with a preset. Block-based presets "
+             "fill 1.0 on their region and 0 elsewhere; the separable "
+             "polynomial preset fills each grid with a tensor-product "
+             "Legendre basis (level/slope/curvature) — edit signs / "
+             "values after loading.",
     )
+    poly_kwargs: dict = {}
+    if preset_choice == POLY_PRESET_NAME:
+        poly_kwargs["max_degree_expiry"] = int(st.number_input(
+            "Max degree (expiry)", min_value=0, max_value=3, value=1,
+            step=1, key="poly_deg_e",
+            help="Highest Legendre degree along the expiry axis. "
+                 "0=level, 1=slope, 2=curvature.",
+        ))
+        poly_kwargs["max_degree_tenor"] = int(st.number_input(
+            "Max degree (tenor)", min_value=0, max_value=3, value=1,
+            step=1, key="poly_deg_t",
+            help="Highest Legendre degree along the tenor axis. "
+                 "0=level, 1=slope, 2=curvature.",
+        ))
+        poly_kwargs["include_level"] = st.checkbox(
+            "Include (level × level) constant pattern",
+            value=True, key="poly_include_level",
+            help="The (0, 0) tensor product is the constant '1 everywhere' "
+                 "pattern. Uncheck to keep only patterns that vary across "
+                 "the cube.",
+        )
+        max_sum = poly_kwargs["max_degree_expiry"] + poly_kwargs["max_degree_tenor"]
+        use_cutoff = st.checkbox(
+            "Apply total-degree cutoff (i + j ≤ N)",
+            value=False, key="poly_cutoff_on",
+            help="Triangular truncation: drop patterns whose combined "
+                 "degree exceeds the cutoff, so very high-order cross "
+                 "terms like (2, 2) are skipped.",
+        )
+        if use_cutoff:
+            poly_kwargs["degree_cutoff"] = int(st.number_input(
+                "Max total degree (i + j)",
+                min_value=0, max_value=max(max_sum, 1),
+                value=min(max_sum, 2), step=1, key="poly_cutoff",
+            ))
+        n_planned = sum(
+            1
+            for i in range(poly_kwargs["max_degree_expiry"] + 1)
+            for j in range(poly_kwargs["max_degree_tenor"] + 1)
+            if (poly_kwargs.get("degree_cutoff") is None
+                or i + j <= poly_kwargs["degree_cutoff"])
+            and (poly_kwargs["include_level"] or not (i == 0 and j == 0))
+        )
+        st.caption(f"Current settings would generate **{n_planned}** pattern(s).")
     if st.button("Load preset", use_container_width=True):
         loader = PRESETS[preset_choice]
         if loader is not None:
-            new_patterns = loader()
-            st.session_state.patterns = new_patterns
-            st.session_state.n_patterns_input = len(new_patterns)
-            st.session_state.epoch += 1
-            st.toast(f"Loaded {len(new_patterns)} patterns from "
-                     f"'{preset_choice}'.", icon="✅")
+            new_patterns = loader(**poly_kwargs)
+            if not new_patterns:
+                st.toast("Preset returned 0 patterns — relax the cutoff "
+                         "or re-enable the constant pattern.", icon="⚠️")
+            else:
+                st.session_state.patterns = new_patterns
+                st.session_state.n_patterns_input = len(new_patterns)
+                st.session_state.epoch += 1
+                st.toast(f"Loaded {len(new_patterns)} patterns from "
+                         f"'{preset_choice}'.", icon="✅")
 
     n_patterns = int(st.number_input(
         "Number of patterns", min_value=1, max_value=16,
@@ -201,6 +259,33 @@ with st.sidebar:
         f"Grid is **{len(EXPIRY_LABELS)} expiries × {len(TENOR_LABELS)} "
         f"tenors** (from `config.py`)."
     )
+
+if preset_choice == POLY_PRESET_NAME:
+    max_e = int(st.session_state.get("poly_deg_e", 1))
+    max_t = int(st.session_state.get("poly_deg_t", 1))
+    exp_b = legendre_basis(len(EXPIRY_LABELS), max_e)
+    ten_b = legendre_basis(len(TENOR_LABELS), max_t)
+    fig_b, axes_b = plt.subplots(1, 2, figsize=(11, 2.6))
+    for d, vec in enumerate(exp_b):
+        axes_b[0].plot(range(len(EXPIRY_LABELS)), vec, marker="o",
+                       label=degree_name(d), linewidth=1.4, markersize=3)
+    axes_b[0].set_xticks(range(len(EXPIRY_LABELS)))
+    axes_b[0].set_xticklabels(EXPIRY_LABELS, rotation=60, ha="right", fontsize=7)
+    axes_b[0].axhline(0, color="grey", lw=0.5)
+    axes_b[0].set_title("Expiry-axis Legendre basis")
+    axes_b[0].legend(fontsize=8, loc="best")
+    for d, vec in enumerate(ten_b):
+        axes_b[1].plot(range(len(TENOR_LABELS)), vec, marker="o",
+                       label=degree_name(d), linewidth=1.4, markersize=3)
+    axes_b[1].set_xticks(range(len(TENOR_LABELS)))
+    axes_b[1].set_xticklabels(TENOR_LABELS, rotation=60, ha="right", fontsize=7)
+    axes_b[1].axhline(0, color="grey", lw=0.5)
+    axes_b[1].set_title("Tenor-axis Legendre basis")
+    axes_b[1].legend(fontsize=8, loc="best")
+    fig_b.tight_layout()
+    st.markdown("**1D basis preview** — what the preset will outer-product "
+                "into each pattern. Reflects current sidebar degrees.")
+    st.pyplot(fig_b)
 
 if "patterns" not in st.session_state:
     st.session_state.patterns = []

@@ -1,12 +1,18 @@
 """Daily-diff and parallel-shift-stripped panels from raw surface pkls.
 
 For each canonical surface (``rate``, ``atm_vol``, ``skew_p2``,
-``skew_n2``) this reads the long-format raw pkl and writes two wide-format
-derived pkls alongside it:
+``skew_n2``) this reads the long-format raw pkl and writes two derived
+pkls alongside it, **in the same long format**
+``[date, expiry, tenor, value]``:
 
-* ``{name}_diff.pkl``     — ``wide.diff()`` (the daily move panel).
+* ``{name}_diff.pkl``     — the daily move (``wide.diff()`` pivoted back).
 * ``{name}_residual.pkl`` — the diff with the realised-std-weighted
-                            parallel shift subtracted.
+                            parallel shift subtracted, pivoted back.
+
+Aligning the derived schema with the raw schema means any consumer
+reads all three the same way::
+
+    panel = to_wide(load_long(path))
 
 The parallel shift on day ``t`` is the cross-sectional aggregate of diffs
 *normalised* by each cell's trailing realised std::
@@ -54,6 +60,17 @@ _DEFAULT_DIR = Path(__file__).resolve().parent / "mock"
 def compute_diff(wide: pd.DataFrame) -> pd.DataFrame:
     """First daily diff of a wide panel; the all-NaN first row is dropped."""
     return wide.diff().dropna(how="all")
+
+
+def _wide_to_long(wide: pd.DataFrame) -> pd.DataFrame:
+    """Pivot a wide ``(date × MultiIndex(expiry, tenor))`` panel back to
+    the canonical long format ``[date, expiry, tenor, value]``. NaN cells
+    are preserved (no implicit dropna) so the long table stays aligned
+    with the diff / residual mask."""
+    # ``future_stack=True`` adopts the pandas-2.1 stack behaviour, which
+    # keeps NaN cells by default (matching the ``dropna=False`` we want).
+    s = wide.stack(level=["expiry", "tenor"], future_stack=True)
+    return s.rename("value").reset_index()[["date", "expiry", "tenor", "value"]]
 
 
 def _aggregate_shift(
@@ -164,9 +181,10 @@ def build_all(
         wide = to_wide(load_long(inp / f"{name}.pkl"))
         diff = compute_diff(wide)
         residual = strip_parallel_shift(diff, window=window)
-        diff.to_pickle(out / f"{name}_diff.pkl")
-        residual.to_pickle(out / f"{name}_residual.pkl")
-        print(f"{name}: diff {diff.shape}, residual {residual.shape}")
+        _wide_to_long(diff).to_pickle(out / f"{name}_diff.pkl")
+        _wide_to_long(residual).to_pickle(out / f"{name}_residual.pkl")
+        print(f"{name}: diff {diff.shape[0]}d × {diff.shape[1]} cells, "
+              f"residual {residual.shape[0]}d × {residual.shape[1]} cells")
 
 
 if __name__ == "__main__":

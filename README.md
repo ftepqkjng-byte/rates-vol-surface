@@ -62,9 +62,9 @@ streamlit run streamlit_apps/pattern_creator.py
 .
 ├── data/
 │   ├── mock/                       # raw + derived pkls per surface
-│   │   ├── {name}.pkl              # raw long-format
-│   │   ├── {name}_diff.pkl         # daily diff (wide)
-│   │   └── {name}_residual.pkl     # diff with std-weighted parallel shift stripped
+│   │   ├── {name}.pkl              # raw long-format [date, expiry, tenor, value]
+│   │   ├── {name}_diff.pkl         # same long format — daily diff
+│   │   └── {name}_residual.pkl     # same long format — diff with parallel shift stripped
 │   ├── mock_data.py                # synthetic generator + auto-runs pipeline
 │   └── pipeline.py                 # builds *_diff.pkl and *_residual.pkl from raw
 ├── notebooks/

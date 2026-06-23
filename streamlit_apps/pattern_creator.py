@@ -253,7 +253,11 @@ with st.sidebar:
                             step=0.1,
                             help="Apply a 2D Gaussian blur to the raw "
                                  "0/±1 grid. 0 = hard boundary."))
-    save_path = st.text_input("Save path", "data/priors.pkl")
+    save_path = st.text_input(
+        "Save path", "data/priors.pkl",
+        help="Relative paths are anchored to the project root, not the "
+             "current working directory.",
+    )
     st.markdown("---")
     st.markdown(
         f"Grid is **{len(EXPIRY_LABELS)} expiries × {len(TENOR_LABELS)} "
@@ -386,6 +390,8 @@ with info_col:
             {name: to_series(arr, name) for name, arr in smoothed_patterns}
         ).T
         path = Path(save_path)
+        if not path.is_absolute():
+            path = _ROOT / path
         path.parent.mkdir(parents=True, exist_ok=True)
         out.to_pickle(path)
         st.success(f"Wrote {len(out)} pattern(s) to `{path}`.")

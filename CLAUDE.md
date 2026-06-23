@@ -68,9 +68,11 @@ interpretable factors that can be used as hedging reference.
   cross-sectional aggregation, and `sigma_floor_pct` lifts σ values
   below the given per-row quantile to avoid blown-up z-scores from
   near-zero σ. `build_all` writes `{name}_diff.pkl` and
-  `{name}_residual.pkl` in wide format alongside the raw long-format
-  pkls. Justifications for the defaults — and signals for when to
-  flip each knob — are in `notebooks/residual_diagnostics.ipynb`.
+  `{name}_residual.pkl` in the same **long** format
+  `[date, expiry, tenor, value]` as the raw pkls, so every consumer
+  reads all three via `load_long` + `to_wide`. Justifications for the
+  defaults — and signals for when to flip each knob — are in
+  `notebooks/residual_diagnostics.ipynb`.
 * `pca.py` — `load_long(path)`, `to_wide(long_df)`, `run_pca(wide, k)`,
   `reconstruct(scores, loadings, wide, k)`. Re-exports the canonical
   label sets from `config.py`. `load_long` filters to these sets,
@@ -175,10 +177,10 @@ interpretable factors that can be used as hedging reference.
 * `data/mock/{rate, atm_vol, skew_p2, skew_n2}.pkl` — long-format
   DataFrames with columns `[date, expiry, tenor, value]`. 500 days ×
   204 pairs = 102,000 rows each.
-* `data/mock/{rate, atm_vol, skew_p2, skew_n2}_diff.pkl` — wide
-  daily-diff panels (date × MultiIndex(expiry, tenor)).
-* `data/mock/{rate, atm_vol, skew_p2, skew_n2}_residual.pkl` — diff
-  panels with the std-weighted parallel shift removed.
+* `data/mock/{rate, atm_vol, skew_p2, skew_n2}_diff.pkl` — long-format
+  daily-diff tables `[date, expiry, tenor, value]`.
+* `data/mock/{rate, atm_vol, skew_p2, skew_n2}_residual.pkl` — same
+  long format, diff with the std-weighted parallel shift removed.
 
 ## Active research direction
 

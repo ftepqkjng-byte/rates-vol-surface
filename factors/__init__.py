@@ -26,6 +26,17 @@ here so ``from factors import X`` keeps working:
 * ``factors.metrics``     — ``variance_retained``, ``loading_sparsity``,
                             ``rolling_stability``, ``replication_residual``,
                             ``metrics_table``
+* ``factors.anchor``      — anchor-point regression factor model:
+                            ``get_anchor_slice``, ``residual_panel``,
+                            ``fit_ridge``, ``fit_nnls``, ``fit_simplex``,
+                            ``fit_ridge_rolling``, ``fit_nnls_rolling``,
+                            ``fit_simplex_rolling``,
+                            ``anchor_diagnostics``, ``greedy_anchor_select``,
+                            ``r2_heatmap``, ``constraint_cost_heatmap``,
+                            ``convex_hull_flags``, ``beta_allocation_table``,
+                            ``beta_stability``, ``anchor_metrics_row``,
+                            ``anchor_zscore``, ``residual_zscore``,
+                            ``anomaly_report``.
 """
 
 from .rotation import varimax, rotate_scores
@@ -63,6 +74,27 @@ from .metrics import (
     replication_residual,
     metrics_table,
 )
+from .anchor import (
+    get_anchor_slice,
+    residual_panel,
+    fit_ridge,
+    fit_nnls,
+    fit_simplex,
+    fit_ridge_rolling,
+    fit_nnls_rolling,
+    fit_simplex_rolling,
+    anchor_diagnostics,
+    greedy_anchor_select,
+    r2_heatmap,
+    constraint_cost_heatmap,
+    convex_hull_flags,
+    beta_allocation_table,
+    beta_stability,
+    anchor_metrics_row,
+    anchor_zscore,
+    residual_zscore,
+    anomaly_report,
+)
 
 __all__ = [
     # rotation
@@ -87,4 +119,13 @@ __all__ = [
     # metrics
     "variance_retained", "loading_sparsity", "rolling_stability",
     "replication_residual", "metrics_table",
+    # anchor
+    "get_anchor_slice", "residual_panel",
+    "fit_ridge", "fit_nnls", "fit_simplex",
+    "fit_ridge_rolling", "fit_nnls_rolling", "fit_simplex_rolling",
+    "anchor_diagnostics", "greedy_anchor_select",
+    "r2_heatmap", "constraint_cost_heatmap",
+    "convex_hull_flags", "beta_allocation_table",
+    "beta_stability", "anchor_metrics_row",
+    "anchor_zscore", "residual_zscore", "anomaly_report",
 ]

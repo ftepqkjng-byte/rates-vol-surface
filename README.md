@@ -107,7 +107,7 @@ Every track below is one way to push back on one or both.
 
 ## Current progress
 
-The six tracks below are all implemented end-to-end, each with a
+The seven tracks below are all implemented end-to-end, each with a
 driving notebook:
 
 1. **Vanilla PCA on residuals** — `notebooks/pca.ipynb`. Baseline.
@@ -157,6 +157,36 @@ driving notebook:
    second-difference roughness penalty for smoothness-biased
    loadings; the notebook chooses `λ` against a rolling-stability
    sweep.
+7. **Book-vega pattern hedging** — `notebooks/pattern_hedging.ipynb`,
+   `factors/hedging.py`. Given a book's vega and each cell's
+   regression beta on a fixed set of already-trained pattern scores
+   (`factors.regress(targets=diff, factors=pattern_scores)`),
+   `factors.book_pattern_exposure` aggregates the book's exposure to
+   each pattern:
+   $$\text{Book}_k = \sum_i \text{vega}_i \cdot \beta_{i,k}.$$
+   `factors.sparse_hedge` then finds the smallest-notional hedge at a
+   liquid subset of grid points
+   (`config.LIQUID_EXPIRY_LABELS × config.LIQUID_TENOR_LABELS`, via
+   `factors.liquid_hedge_candidates`) that brings every pattern's
+   residual exposure back within tolerance:
+   $$\min_{\alpha} \sum_i \text{cost}_i \, |\alpha_i|
+   \quad \text{s.t.} \quad
+   \left| \text{Book}_k - \sum_i \alpha_i \, \beta_{i,k} \right| \le \varepsilon_k
+   \ \ \forall k.$$
+   This is solved as a linear program (`scipy.optimize.linprog`): the
+   L1 objective and the absolute-value constraint are both linearised
+   by splitting each position into non-negative parts,
+   $\alpha_i = \alpha_i^+ - \alpha_i^-$ with
+   $|\alpha_i| = \alpha_i^+ + \alpha_i^-$, turning both into linear
+   expressions in $(\alpha^+, \alpha^-) \ge 0$. `cost_i` defaults to
+   `1.0` (pure notional minimisation) until a real price/liquidity
+   vector exists. `epsilon` defaults to a per-pattern tolerance from
+   the diagonal of the pattern-score covariance,
+   `factors.pattern_epsilon`:
+   $$\varepsilon_k = z \cdot \sqrt{\mathrm{Var}(F_k)},$$
+   deliberately diagonal-only (ignoring cross-pattern covariance) so
+   the whole problem stays a pure LP rather than a quadratically
+   constrained one.
 
 **Comparison metrics** (`factors.metrics_table`) — variance retained
 at K, loading sparsity (Gini), rolling-window stability, hedge

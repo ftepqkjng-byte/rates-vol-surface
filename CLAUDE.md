@@ -129,6 +129,21 @@ interpretable factors that can be used as hedging reference.
       `sparse_pca_warm`.
     * `factors/metrics.py` — `variance_retained`, `loading_sparsity`,
       `rolling_stability`, `replication_residual`, `metrics_table`.
+    * `factors/hedging.py` — book-vega hedging against a fixed set of
+      already-trained patterns (as opposed to `factors/anchor.py`,
+      which builds the patterns from concrete tradeable cube cells).
+      `book_pattern_exposure(vega, betas)` aggregates a vega panel
+      into book exposure per pattern (`vega @ betas`).
+      `pattern_epsilon(cov, z)` derives a per-pattern linear risk
+      tolerance from the diagonal of a pattern-score covariance
+      matrix. `liquid_hedge_candidates(index)` filters a cube index
+      down to `config.LIQUID_EXPIRY_LABELS` ×
+      `config.LIQUID_TENOR_LABELS`. `sparse_hedge(book_exposure,
+      betas, epsilon, cost=None, candidates=None)` solves the
+      L1-minimal hedge — smallest weighted notional that brings every
+      pattern's residual exposure within its epsilon band — as a
+      linear program (`scipy.optimize.linprog`, `alpha` split into
+      plus/minus parts).
 * `notebooks/pca.ipynb` — PCA on the parallel-shift-stripped residual
   panels (`{name}_residual.pkl`). Scree, top-3 loading heatmaps,
   rate↔vol cross-correlation, reconstruction MAE, stability check.
@@ -165,6 +180,15 @@ interpretable factors that can be used as hedging reference.
   functional-PCA `λ` sweep against a rolling-stability proxy, and a
   `sparse_pca_warm`-on-marginal-eigvec-prior `metrics_table` row that
   drops straight into the cross-track sheet.
+* `notebooks/pattern_hedging.ipynb` — end-to-end demo of
+  `factors/hedging.py`. Since no production pkl of trained
+  patterns / betas / book vega exists yet, builds a toy example
+  inline: 5 Legendre patterns (`pattern_basis.preset_separable_poly`)
+  fit via `sparse_pca_warm` on the mock ATM-vol diff panel, betas via
+  `factors.regress`, a fabricated book-vega vector spanning both
+  liquid and illiquid cells, then `book_pattern_exposure` /
+  `pattern_epsilon` / `sparse_hedge` with a book-vs-hedge-vs-residual
+  bar chart. Swap steps 1-3 for real pkl reads once those pkls exist.
 * `tests/test_pipeline.py` — backward-compat + leakage-free + sanity
   tests for `strip_parallel_shift`. Pipeline carries easy-to-break
   invariants (default-args behaviour, no look-ahead under either β
@@ -174,6 +198,12 @@ interpretable factors that can be used as hedging reference.
   contrast on the residual diagnostic, `functional_pca(lam=0)`
   matches direct `eigh(Σ̂)`, and roughness-penalty null-space /
   oscillation sanity checks. Run all tests with `pytest tests/`.
+* `tests/test_hedging.py` — synthetic-DGP tests for
+  `factors/hedging.py`: exact recovery when one candidate's exposure
+  exactly matches the book, residual-within-epsilon on a random
+  well-posed system, cost-based tie-breaking between two otherwise
+  interchangeable candidates, the liquid-universe filter, and the
+  infeasible-LP raise path.
 * `data/mock/{rate, atm_vol, skew_p2, skew_n2}.pkl` — long-format
   DataFrames with columns `[date, expiry, tenor, value]`. 500 days ×
   204 pairs = 102,000 rows each.

@@ -37,6 +37,9 @@ here so ``from factors import X`` keeps working:
                             ``beta_stability``, ``anchor_metrics_row``,
                             ``anchor_zscore``, ``residual_zscore``,
                             ``anomaly_report``.
+* ``factors.hedging``     — book-vega hedging against trained patterns:
+                            ``book_pattern_exposure``, ``pattern_epsilon``,
+                            ``liquid_hedge_candidates``, ``sparse_hedge``.
 """
 
 from .rotation import varimax, rotate_scores
@@ -95,6 +98,12 @@ from .anchor import (
     residual_zscore,
     anomaly_report,
 )
+from .hedging import (
+    book_pattern_exposure,
+    pattern_epsilon,
+    liquid_hedge_candidates,
+    sparse_hedge,
+)
 
 __all__ = [
     # rotation
@@ -128,4 +137,7 @@ __all__ = [
     "convex_hull_flags", "beta_allocation_table",
     "beta_stability", "anchor_metrics_row",
     "anchor_zscore", "residual_zscore", "anomaly_report",
+    # hedging
+    "book_pattern_exposure", "pattern_epsilon",
+    "liquid_hedge_candidates", "sparse_hedge",
 ]

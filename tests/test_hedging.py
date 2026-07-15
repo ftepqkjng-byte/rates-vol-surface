@@ -4,8 +4,9 @@ patterns.
 Covers exact recovery when a single candidate's exposure direction
 matches the book exactly, residual-within-epsilon on a random
 well-posed system, cost-based tie-breaking between two candidates with
-identical exposure but different cost, the liquid-universe filter, and
-the infeasible-LP raise path.
+identical exposure but different cost, the liquid-universe filter, the
+infeasible-LP raise path, and the ``method="min_residual"``
+(position-cap) dual formulation.
 """
 
 from __future__ import annotations
@@ -132,6 +133,90 @@ def test_infeasible_raises():
 
     with pytest.raises(ValueError):
         sparse_hedge(book_exposure, betas, epsilon, candidates=cand)
+
+
+# ---------------------------------------------------------------------------
+# 6. method="min_residual" — position-cap dual formulation
+# ---------------------------------------------------------------------------
+
+def test_min_residual_hits_position_cap_when_binding():
+    """A single candidate whose beta is proportional to the book: fully
+    hedging would need alpha=10, but position_cap=3 forces the LP to
+    stop at the cap, leaving a nonzero residual."""
+    cand = _make_cand_index([("2Y", "2Y")])
+    betas = pd.DataFrame({"F1": [1.0], "F2": [-0.4]}, index=cand)
+    book_exposure = pd.Series({"F1": 10.0, "F2": -4.0})
+
+    result = sparse_hedge(
+        book_exposure, betas, position_cap=3.0, candidates=cand,
+        method="min_residual",
+    )
+
+    assert result["alpha"].loc[("2Y", "2Y")] == pytest.approx(3.0, abs=1e-4)
+    assert result["total_residual"] == pytest.approx(7.0 + 2.8, abs=1e-4)
+    assert (result["alpha"].abs() <= 3.0 + 1e-6).all()
+
+
+def test_min_residual_matches_min_notional_recovery_when_cap_generous():
+    """Same exact-recovery setup as test_exact_recovery_single_candidate:
+    with a position_cap well above what's needed, min_residual should
+    reach ~zero residual too. NOTE: unlike min_notional, min_residual has
+    no preference among alpha combinations that all hit zero residual, so
+    the specific alpha values are *not* asserted here — see
+    test_min_residual_can_be_non_sparse_at_zero_residual below, which
+    documents that this degeneracy is real and can produce large
+    offsetting positions even when the residual objective is fully met."""
+    cand = _make_cand_index([("2Y", "2Y"), ("5Y", "5Y"), ("10Y", "10Y")])
+    betas = pd.DataFrame(
+        {"F1": [1.0, 0.5, 0.2], "F2": [-0.4, 0.5, -0.9]}, index=cand
+    )
+    book_exposure = pd.Series({"F1": 10.0, "F2": -4.0})
+
+    result = sparse_hedge(
+        book_exposure, betas, position_cap=100.0, candidates=cand,
+        method="min_residual",
+    )
+
+    assert result["total_residual"] == pytest.approx(0.0, abs=1e-4)
+    assert result["hedge_exposure"]["F1"] == pytest.approx(10.0, abs=1e-4)
+    assert result["hedge_exposure"]["F2"] == pytest.approx(-4.0, abs=1e-4)
+
+
+def test_min_residual_can_be_non_sparse_at_zero_residual():
+    """Documents a real gap: with >=3 candidates spanning only 2 patterns,
+    once total_residual hits its minimum the LP is indifferent among all
+    alpha combinations achieving it — nothing in the min_residual
+    objective prefers the small/sparse one, so it can return large
+    offsetting positions (total_notional far above the cheapest
+    alternative) even though the fit is perfect. Left as a known
+    limitation rather than silently "fixed" — see conversation notes on
+    the lexicographic two-stage follow-up."""
+    cand = _make_cand_index([("2Y", "2Y"), ("5Y", "5Y"), ("10Y", "10Y")])
+    betas = pd.DataFrame(
+        {"F1": [1.0, 0.5, 0.2], "F2": [-0.4, 0.5, -0.9]}, index=cand
+    )
+    book_exposure = pd.Series({"F1": 10.0, "F2": -4.0})
+
+    result = sparse_hedge(
+        book_exposure, betas, position_cap=100.0, candidates=cand,
+        method="min_residual",
+    )
+
+    assert result["total_residual"] == pytest.approx(0.0, abs=1e-4)
+    # The sparse (min_notional-equivalent) solution costs 10.0 notional;
+    # min_residual alone is free to land far above that.
+    assert result["total_notional"] > 50.0
+
+
+def test_sparse_hedge_requires_method_specific_param():
+    cand = _make_cand_index([("2Y", "2Y")])
+    betas = pd.DataFrame({"F1": [1.0]}, index=cand)
+    book_exposure = pd.Series({"F1": 5.0})
+
+    with pytest.raises(ValueError):
+        sparse_hedge(book_exposure, betas, candidates=cand, method="min_notional")
+    with pytest.raises(ValueError):
+        sparse_hedge(book_exposure, betas, candidates=cand, method="min_residual")
 
 
 # ---------------------------------------------------------------------------

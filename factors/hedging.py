@@ -19,9 +19,15 @@ Helpers in this module
 * ``liquid_hedge_candidates`` — filter a cube index down to the liquid
   hedge universe (``config.LIQUID_EXPIRY_LABELS`` ×
   ``config.LIQUID_TENOR_LABELS``).
-* ``sparse_hedge``          — the L1-minimal hedge LP: minimise total
-  weighted notional subject to each pattern's residual exposure
-  staying within its epsilon band.
+* ``sparse_hedge``          — the hedge LP, two dual formulations
+  selected via ``method``:
+
+  * ``"min_notional"`` (default) — minimise total weighted notional
+    subject to each pattern's residual exposure staying within its
+    epsilon band.
+  * ``"min_residual"`` — minimise total residual exposure (summed
+    across patterns) subject to every position staying under a fixed
+    per-instrument notional cap.
 """
 
 from __future__ import annotations
@@ -94,24 +100,41 @@ def liquid_hedge_candidates(index: pd.MultiIndex) -> pd.MultiIndex:
 def sparse_hedge(
     book_exposure: pd.Series,
     betas: pd.DataFrame,
-    epsilon: pd.Series,
+    epsilon: pd.Series | None = None,
+    position_cap: float | pd.Series | None = None,
     cost: pd.Series | None = None,
     candidates: pd.MultiIndex | None = None,
     tol: float = 1e-6,
+    method: str = "min_notional",
 ) -> dict:
-    """L1-minimal hedge: smallest weighted notional that brings every
-    pattern's residual exposure within ``epsilon``.
+    """Hedge LP — two dual formulations of the same fit-vs-cost trade-off.
 
-    Solves::
+    ``method="min_notional"`` (default) — smallest weighted notional
+    that brings every pattern's residual exposure within ``epsilon``::
 
         min_alpha   sum_i cost_i * |alpha_i|
         s.t.        |book_exposure_k - sum_i alpha_i * beta_{i,k}| <= epsilon_k
                     for every pattern k
 
-    Linearised into a standard-form LP by splitting
+    ``method="min_residual"`` — smallest total residual exposure
+    (summed across patterns) given a fixed notional cap per
+    instrument::
+
+        min_alpha   sum_k |book_exposure_k - sum_i alpha_i * beta_{i,k}|
+        s.t.        |alpha_i| * cost_i <= position_cap_i   for every candidate i
+
+    Both are linearised into a standard-form LP by splitting
     ``alpha_i = alpha_plus_i - alpha_minus_i`` (both ``>= 0``), so
-    ``|alpha_i| = alpha_plus_i + alpha_minus_i``, and solved with
+    ``|alpha_i| = alpha_plus_i + alpha_minus_i``; ``min_residual``
+    additionally uses one epigraph variable ``t_k >= |residual_k|``
+    per pattern so the summed absolute value stays linear. Solved with
     ``scipy.optimize.linprog(method="highs")``.
+
+    Unlike ``min_notional``, ``min_residual`` is a box-constrained LP
+    over ``alpha`` alone and is therefore always feasible (``alpha=0``
+    trivially satisfies every bound) — it never raises for
+    infeasibility, it just reports a large ``total_residual`` if
+    ``position_cap`` is set too tight to hedge well.
 
     Parameters
     ----------
@@ -121,7 +144,12 @@ def sparse_hedge(
                     panel; restricted to ``candidates`` internally.
     epsilon       : Series of length ``n_patterns``, aligned to
                     ``book_exposure``/``betas.columns`` (from
-                    ``pattern_epsilon`` or supplied directly).
+                    ``pattern_epsilon`` or supplied directly). Required
+                    for ``method="min_notional"``, ignored otherwise.
+    position_cap  : per-instrument notional cap — a single float
+                    (applied uniformly) or a Series indexed like
+                    ``candidates``. Required for
+                    ``method="min_residual"``, ignored otherwise.
     cost          : optional per-candidate unit cost/weight, indexed
                     like ``candidates``. Defaults to all-ones (pure
                     notional minimisation) — a real price/liquidity
@@ -132,21 +160,36 @@ def sparse_hedge(
                     ``liquid_hedge_candidates(betas.index)``.
     tol           : threshold on ``|alpha_i|`` for counting a position
                     as active in ``n_active``.
+    method        : ``"min_notional"`` or ``"min_residual"``.
 
     Returns
     -------
     dict with keys ``alpha`` (signed positions, Series over
     ``candidates``), ``hedge_exposure``, ``book_exposure``,
-    ``residual_exposure``, ``epsilon``, ``total_notional``,
-    ``n_active``, ``raw_result`` (the ``scipy`` ``OptimizeResult``).
+    ``residual_exposure``, ``total_notional`` (``sum cost_i*|alpha_i|``,
+    always computed regardless of ``method``), ``total_residual``
+    (``sum_k |residual_k|``, likewise always computed), ``n_active``,
+    ``method``, ``raw_result`` (the ``scipy`` ``OptimizeResult``), plus
+    ``epsilon`` (``method="min_notional"``) or ``position_cap``
+    (``method="min_residual"``).
 
     Raises
     ------
-    ValueError if the LP is infeasible (no combination of candidates
-    can bring every pattern within its epsilon band) — widen
-    ``epsilon`` or the candidate set rather than trusting a garbage
-    solution.
+    ValueError if ``method="min_notional"`` and the LP is infeasible
+    (no combination of candidates can bring every pattern within its
+    epsilon band) — widen ``epsilon`` or the candidate set rather than
+    trusting a garbage solution. Also raised if the parameter required
+    by the chosen ``method`` is missing.
     """
+    if method not in ("min_notional", "min_residual"):
+        raise ValueError(
+            f"method must be 'min_notional' or 'min_residual', got {method!r}"
+        )
+    if method == "min_notional" and epsilon is None:
+        raise ValueError("epsilon is required for method='min_notional'")
+    if method == "min_residual" and position_cap is None:
+        raise ValueError("position_cap is required for method='min_residual'")
+
     if candidates is None:
         candidates = liquid_hedge_candidates(betas.index)
 
@@ -164,49 +207,77 @@ def sparse_hedge(
 
     B = B_df.values                      # (n, k)
     book = book_exposure.loc[patterns].values
-    eps = epsilon.loc[patterns].values
     k = len(patterns)
 
-    c = np.concatenate([cost_arr, cost_arr])          # (2n,)
-    A_ub = np.zeros((2 * k, 2 * n))
-    b_ub = np.zeros(2 * k)
-    for j in range(k):
-        # book_j - hedge_j <= eps_j  =>  -B_j·(a+) + B_j·(a-) <= eps_j - book_j
-        A_ub[2 * j, :n] = -B[:, j]
-        A_ub[2 * j, n:] = B[:, j]
-        b_ub[2 * j] = eps[j] - book[j]
-        # hedge_j - book_j <= eps_j  =>  B_j·(a+) - B_j·(a-) <= eps_j + book_j
-        A_ub[2 * j + 1, :n] = B[:, j]
-        A_ub[2 * j + 1, n:] = -B[:, j]
-        b_ub[2 * j + 1] = eps[j] + book[j]
+    if method == "min_notional":
+        eps = epsilon.loc[patterns].values
+        c = np.concatenate([cost_arr, cost_arr])          # (2n,)
+        A_ub = np.zeros((2 * k, 2 * n))
+        b_ub = np.zeros(2 * k)
+        for j in range(k):
+            # book_j - hedge_j <= eps_j  =>  -B_j·(a+) + B_j·(a-) <= eps_j - book_j
+            A_ub[2 * j, :n] = -B[:, j]
+            A_ub[2 * j, n:] = B[:, j]
+            b_ub[2 * j] = eps[j] - book[j]
+            # hedge_j - book_j <= eps_j  =>  B_j·(a+) - B_j·(a-) <= eps_j + book_j
+            A_ub[2 * j + 1, :n] = B[:, j]
+            A_ub[2 * j + 1, n:] = -B[:, j]
+            b_ub[2 * j + 1] = eps[j] + book[j]
+        bounds = [(0.0, None)] * (2 * n)
+    else:
+        if np.isscalar(position_cap):
+            cap_series = pd.Series(float(position_cap), index=cand)
+        else:
+            cap_series = position_cap.reindex(cand)
+        cap_arr = cap_series.values / cost_arr            # per-candidate bound on |alpha_i|
 
-    res = linprog(
-        c, A_ub=A_ub, b_ub=b_ub, bounds=[(0.0, None)] * (2 * n), method="highs"
-    )
+        c = np.concatenate([np.zeros(2 * n), np.ones(k)])  # (2n+k,) — minimise sum(t)
+        A_ub = np.zeros((2 * k, 2 * n + k))
+        b_ub = np.zeros(2 * k)
+        for j in range(k):
+            # t_j >= book_j - hedge_j  =>  -B_j·(a+) + B_j·(a-) - t_j <= -book_j
+            A_ub[2 * j, :n] = -B[:, j]
+            A_ub[2 * j, n:2 * n] = B[:, j]
+            A_ub[2 * j, 2 * n + j] = -1.0
+            b_ub[2 * j] = -book[j]
+            # t_j >= hedge_j - book_j  =>  B_j·(a+) - B_j·(a-) - t_j <= book_j
+            A_ub[2 * j + 1, :n] = B[:, j]
+            A_ub[2 * j + 1, n:2 * n] = -B[:, j]
+            A_ub[2 * j + 1, 2 * n + j] = -1.0
+            b_ub[2 * j + 1] = book[j]
+        bounds = [(0.0, cap_arr[i]) for i in range(n)] * 2 + [(0.0, None)] * k
+
+    res = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs")
     if not res.success:
         raise ValueError(
-            f"sparse_hedge LP infeasible: {res.message} — widen epsilon or "
-            f"the candidate set"
+            f"sparse_hedge LP infeasible ({method}): {res.message} — widen "
+            f"epsilon/position_cap or the candidate set"
         )
 
-    alpha_arr = res.x[:n] - res.x[n:]
+    alpha_arr = res.x[:n] - res.x[n:2 * n]
     alpha = pd.Series(alpha_arr, index=cand, name="alpha")
 
     hedge_exposure = pd.Series(alpha_arr @ B, index=patterns, name="hedge_exposure")
     book_exposure_out = book_exposure.loc[patterns]
     residual_exposure = book_exposure_out - hedge_exposure
-    epsilon_out = epsilon.loc[patterns]
 
     total_notional = float((cost_arr * np.abs(alpha_arr)).sum())
+    total_residual = float(residual_exposure.abs().sum())
     n_active = int((np.abs(alpha_arr) > tol).sum())
 
-    return {
+    out = {
         "alpha": alpha,
         "hedge_exposure": hedge_exposure,
         "book_exposure": book_exposure_out,
         "residual_exposure": residual_exposure,
-        "epsilon": epsilon_out,
         "total_notional": total_notional,
+        "total_residual": total_residual,
         "n_active": n_active,
+        "method": method,
         "raw_result": res,
     }
+    if method == "min_notional":
+        out["epsilon"] = epsilon.loc[patterns]
+    else:
+        out["position_cap"] = cap_series
+    return out
